@@ -48,7 +48,7 @@
 ├── openclaw-im/                      # IM 渠道接入
 │   ├── wechat-clawbot.md             #   微信 ClawBot 接入指南
 │   ├── wecom-bot.md                  #   企业微信长连接机器人接入指南
-│   └── feishu.md                     #   飞书原生深度集成指南（即将更新）
+│   └── feishu-openclaw.md            #   飞书原生深度集成指南
 │
 ├── openclaw-models/                  # 模型配置与成本控制
 │   ├── volcengine-coding-plan.md     #   火山引擎 Coding Plan 购买与配置
@@ -79,7 +79,7 @@
 |------|------|
 | [wechat-clawbot.md](openclaw-im/wechat-clawbot.md) | 微信 ClawBot 接入：官方插件，一条命令 + 扫码 |
 | [wecom-bot.md](openclaw-im/wecom-bot.md) | 企业微信长连接机器人：免公网 IP，支持群聊 + 文档 MCP |
-| [feishu.md](openclaw-im/feishu.md) | 飞书原生深度集成（即将更新） |
+| [feishu-openclaw.md](openclaw-im/feishu-openclaw.md) | 飞书原生深度集成 |
 
 ### 📂 [openclaw-models/](openclaw-models/) — 模型配置与成本控制
 
