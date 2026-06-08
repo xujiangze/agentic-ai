@@ -1,18 +1,34 @@
+# 单元配置：定义服务的基本信息和依赖关系
 [Unit]
+# 服务描述信息（会在 systemd 列表中显示）
 Description=XHS Auto Publisher Cloud
+# 在网络在线之后启动，确保网络连接已建立
 After=network-online.target
+# 主动等待网络在线，增强启动可靠性
 Wants=network-online.target
 
+# 服务配置：定义进程如何运行
 [Service]
+# 服务类型：simple 表示主进程持续运行（非一次性）
 Type=simple
+# 以 root 用户身份运行（可根据安全需要降权）
 User=root
+# 设置工作目录，%h 为用户主目录（/root）
 WorkingDirectory=%h/projects/xhs-auto-publisher
+# 从 .env 文件加载环境变量，"-" 表示文件不存在时忽略
 EnvironmentFile=-%h/projects/xhs-auto-publisher/.env
+# 启动命令：使用虚拟显示运行脚本，并传入内容配置文件路径
 ExecStart=%h/projects/xhs-auto-publisher/deploy/run_with_xvfb.sh %h/projects/xhs-auto-publisher/examples/openclaw_business_content.json
+# 不自动重启服务（根据业务需要可改为 on-failure）
 Restart=no
+# 启动超时时间 15 分钟（用于长时间初始化的服务）
 TimeoutStartSec=900
+# 标准输出重定向到 systemd 日志（可通过 journalctl 查看）
 StandardOutput=journal
+# 标准错误重定向到 systemd 日志
 StandardError=journal
 
+# 安装配置：定义服务何时启动
 [Install]
+# 在多用户运行级别下启用（标准服务器运行级别）
 WantedBy=multi-user.target

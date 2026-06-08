@@ -5,36 +5,46 @@
     {"kind": "css", "value": "a[href*='publish']"},
     {"kind": "css", "value": "[class*='avatar']"}
   ],
+  "_comment_login_success_any": "登录成功验证：检测登录后的关键元素，包括发布笔记入口、创作中心、发布按钮链接和头像元素",
   "publish_entry_any": [
     {"kind": "text", "value": "\u53d1\u5e03\u7b14\u8bb0"},
     {"kind": "text", "value": "\u53d1\u5e03"},
     {"kind": "css", "value": "a[href*='publish']"}
   ],
+  "_comment_publish_entry_any": "发布入口定位：识别进入发布页面的各种入口，包括文本链接和发布相关的CSS选择器",
   "image_upload_input_any": [
     {"kind": "css", "value": "input[type='file'][accept*='image']"},
     {"kind": "css", "value": "input[type='file'][accept*='.jpg']"},
     {"kind": "css", "value": "input[type='file'][accept*='.png']"},
     {"kind": "css", "value": "input[type='file']"}
   ],
+  "_comment_image_upload_input_any": "图片上传控件：定位文件上传输入框，支持图片、JPG、PNG格式的文件选择器",
   "image_tab_any": [
-    {"kind": "text", "value": "\u4e0a\u4f20\u56fe\u6587"}
+    {
+      "kind": "text",
+      "value": "上传图文"
+    }
   ],
+  "_comment_image_tab_any": "图文发布标签：定位上传图文功能的标签页或按钮",
   "title_input_any": [
     {"kind": "placeholder", "value": "\u586b\u5199\u6807\u9898"},
     {"kind": "placeholder", "value": "\u8bf7\u8f93\u5165\u6807\u9898"},
     {"kind": "css", "value": "input[placeholder*='\u6807\u9898']"},
     {"kind": "css", "value": "textarea[placeholder*='\u6807\u9898']"}
   ],
+  "_comment_title_input_any": "标题输入框：识别笔记标题的输入控件，通过placeholder文本和CSS选择器匹配",
   "body_input_any": [
     {"kind": "placeholder", "value": "\u6dfb\u52a0\u6b63\u6587"},
     {"kind": "placeholder", "value": "\u8bf7\u8f93\u5165\u6b63\u6587"},
     {"kind": "css", "value": "textarea[placeholder*='\u6b63\u6587']"},
     {"kind": "css", "value": "[contenteditable='true']"}
   ],
+  "_comment_body_input_any": "正文输入框：定位笔记正文的输入区域，包括textarea和可编辑div元素",
   "publish_button_any": [
     {"kind": "role", "role": "button", "name": "\u53d1\u5e03"},
     {"kind": "text", "value": "\u53d1\u5e03"}
   ],
+  "_comment_publish_button_any": "发布按钮：识别触发笔记发布的按钮元素，通过role属性和文本内容匹配",
   "success_any": [
     {"kind": "text", "value": "\u53d1\u5e03\u6210\u529f"},
     {"kind": "text", "value": "\u63d0\u4ea4\u6210\u529f"},

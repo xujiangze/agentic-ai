@@ -1,2 +1,2 @@
-playwright>=1.44
-requests>=2.31
+playwright>=1.44  # 浏览器自动化测试框架，用于模拟浏览器操作和网页交互
+requests>=2.31  # Python HTTP 请求库，用于发送 HTTP/HTTPS 请求和处理响应

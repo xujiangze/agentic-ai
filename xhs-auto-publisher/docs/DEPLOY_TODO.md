@@ -1,5 +1,7 @@
+<!-- 中文注释：这是云端部署的执行清单，包含 7 个步骤及回报格式 -->
 # 龙虾部署执行清单
 
+<!-- 中文注释：定义目标服务器的操作系统、用户权限和项目位置 -->
 目标机器：
 
 - Ubuntu 24.04.4 LTS
@@ -15,6 +17,7 @@
 ```
 
 ## 第二步：安装系统依赖
+<!-- 中文注释：安装系统级依赖包（包括 xvfb、浏览器内核等），为后续项目运行做准备 -->
 
 执行：
 
@@ -29,6 +32,7 @@ bash ~/projects/xhs-auto-publisher/deploy/install_system_ubuntu.sh
 - 是否有报错
 
 ## 第三步：初始化项目环境
+<!-- 中文注释：创建 Python 虚拟环境、安装项目依赖及 Playwright 浏览器 -->
 
 执行：
 
@@ -44,6 +48,7 @@ bash deploy/bootstrap_project.sh
 - `python -m playwright install chromium` 是否成功
 
 ## 第四步：配置环境变量
+<!-- 中文注释：复制环境变量模板并配置运行模式（草稿或发布）和登录超时时长 -->
 
 执行：
 
@@ -66,6 +71,7 @@ LOGIN_TIMEOUT=300
 - `LOGIN_TIMEOUT`：等待扫码秒数
 
 ## 第五步：手动验证
+<!-- 中文注释：手动运行一次完整流程，验证浏览器启动、二维码生成、payload 文件创建等关键环节 -->
 
 执行：
 
@@ -87,6 +93,7 @@ bash deploy/run_with_xvfb.sh
 - `runtime/lobster-notify/<run_id>/login_qr.payload.json`
 
 ## 第六步：龙虾转发飞书群
+<!-- 中文注释：配置龙虾（通知系统）读取 payload 文件，将二维码图片发送到飞书群供用户扫码 -->
 
 龙虾需要读取：
 
@@ -105,6 +112,7 @@ runtime/lobster-notify/<run_id>/login_qr.payload.json
 - [LOBSTER_NOTIFY_PROTOCOL.md](./LOBSTER_NOTIFY_PROTOCOL.md)
 
 ## 第七步：托管为 systemd 服务
+<!-- 中文注释：将应用配置为 systemd 服务，实现开机自启动和守护进程管理 -->
 
 如果手动验证通过，再执行：
 
@@ -127,6 +135,7 @@ journalctl -u xhs-auto-publisher-cloud.service -n 200 --no-pager
 ```
 
 ## 回报格式
+<!-- 中文注释：定义每步完成后的回报要求，包括执行命令、成功/失败状态、报错信息和当前进度 -->
 
 每完成一步，请回报：
 

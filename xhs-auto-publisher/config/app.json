@@ -1,4 +1,17 @@
 {
+  "_comment": {
+    "platform": "目标发布平台：小红书",
+    "runtime_mode": "运行模式：cloud 云端执行，local 本地执行",
+    "creator_home_url": "小红书创作者中心首页",
+    "publish_url": "小红书内容发布页面",
+    "login_cache_hours": "登录状态缓存时长（小时），避免频繁扫码",
+    "min_publish_interval_minutes": "最小发布间隔（分钟），防止限流",
+    "default_profile_dir": "浏览器配置文件默认存储目录",
+    "default_runtime_dir": "运行时数据默认存储目录",
+    "notify_qr_via": "二维码通知方式：lobster_channel 或其他通知渠道",
+    "feishu_title_prefix": "飞书通知消息标题前缀",
+    "lobster_notify_dir": "Lobster 通知脚本的存储目录"
+  },
   "platform": "xiaohongshu",
   "runtime_mode": "cloud",
   "creator_home_url": "https://creator.xiaohongshu.com/",

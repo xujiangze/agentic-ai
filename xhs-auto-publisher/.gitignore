@@ -1,11 +1,15 @@
+# 环境变量配置文件（包含敏感信息）
 .env
 .env.*
+# Python 编译产物和虚拟环境
 *.pyc
 __pycache__/
 .venv/
+# 运行时数据（浏览器配置、截图、执行结果、缓存等）
 runtime/browser-profile/
 runtime/runs/
 runtime/lobster-notify/
 runtime/login_cache.json
 runtime/published_history.json
+# 日志文件
 *.log

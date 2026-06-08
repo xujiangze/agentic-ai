@@ -3,10 +3,12 @@ name: xhs-auto-publisher
 description: 面向云服务器的小红书图文自动发布 Skill。适用于需要在 Linux 云服务器上，通过 Playwright/CDP、二维码人工接管、登录缓存、龙虾代发飞书群图片消息、截图留痕与审计日志来完成小红书草稿或发布流程的场景。
 ---
 
+<!-- Skill 基本信息：定义名称和描述 -->
 # XHS Auto Publisher Cloud
 
 这个 Skill 是云端执行版，不是本机版替代品。
 
+<!-- Skill 功能定位：解决云服务器环境下的四个核心问题 -->
 它主要解决四件事：
 
 - 在 Linux 云服务器上跑浏览器自动化
@@ -16,6 +18,7 @@ description: 面向云服务器的小红书图文自动发布 Skill。适用于�
 
 ## 默认链路
 
+<!-- 核心工作流程：从登录到发布的完整链路 -->
 当前项目只保留一条默认链路：
 
 1. Agent 打开小红书登录页
@@ -30,6 +33,7 @@ description: 面向云服务器的小红书图文自动发布 Skill。适用于�
 
 ## 适用场景
 
+<!-- 适合场景：Skill 适用和不适用的使用场景列表 -->
 适合：
 
 - 在云服务器上跑小红书图文草稿/发布
@@ -53,6 +57,7 @@ description: 面向云服务器的小红书图文自动发布 Skill。适用于�
 - `docs/`：部署说明和龙虾执行文档
 - `runtime/`：浏览器 profile、截图、运行结果
 
+<!-- 部署层次说明：区分系统级和项目级依赖 -->
 ## 部署分层
 
 ### 系统级
@@ -67,6 +72,7 @@ description: 面向云服务器的小红书图文自动发布 Skill。适用于�
 
 ### 项目级
 
+<!-- 项目专属依赖：只作用于当前项目目录 -->
 这部分只属于当前目录：
 
 - `.venv`
@@ -84,6 +90,7 @@ description: 面向云服务器的小红书图文自动发布 Skill。适用于�
 ~/projects/xhs-auto-publisher/runtime/lobster-notify
 ```
 
+<!-- 输入数据格式：JSON 结构示例 -->
 ## 输入格式
 
 发布内容使用 JSON 文件，例如：
@@ -98,6 +105,7 @@ description: 面向云服务器的小红书图文自动发布 Skill。适用于�
 }
 ```
 
+<!-- 配置选项：环境变量配置示例 -->
 ## 环境变量
 
 当前只保留最常用的两个：
@@ -107,6 +115,7 @@ MODE=publish
 LOGIN_TIMEOUT=300
 ```
 
+<!-- 执行方法：手动运行命令示例 -->
 ## 运行方式
 
 手动运行：
@@ -116,6 +125,7 @@ cd ~/projects/xhs-auto-publisher
 bash deploy/run_with_xvfb.sh
 ```
 
+<!-- 核心工作流程：从输入到输出的完整执行步骤 -->
 ## 执行流程
 
 1. 校验内容和图片
@@ -129,6 +139,7 @@ bash deploy/run_with_xvfb.sh
 9. 上传图片、填写内容、触发发布
 10. 保存截图、日志、DOM 快照和结果 JSON
 
+<!-- 输出文件结构：执行产生的文件组织和类型 -->
 ## 运行产物
 
 每次执行都会写入：
@@ -151,12 +162,14 @@ runtime/runs/<timestamp>/
 runtime/lobster-notify/<run_id>/login_qr.payload.json
 ```
 
+<!-- 相关文档：详细说明文档的链接 -->
 ## 文档入口
 
 - [docs/cloud_deploy.md](./docs/cloud_deploy.md)
 - [docs/DEPLOY_TODO.md](./docs/DEPLOY_TODO.md)
 - [docs/LOBSTER_NOTIFY_PROTOCOL.md](./docs/LOBSTER_NOTIFY_PROTOCOL.md)
 
+<!-- 设计定位：Skill 的核心设计理念和适用范围 -->
 ## 当前定位
 
 这不是并发平台，而是一套稳妥的单机顺序执行方案：
