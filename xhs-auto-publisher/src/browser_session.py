@@ -1,4 +1,37 @@
-# 浏览器会话管理类 - 管理 Playwright 浏览器的生命周期和事件监控
+"""
+浏览器会话管理 - 封装 Playwright 浏览器的生命周期和事件监控。
+
+设计原则
+--------
+1. async context manager 确保资源安全
+   浏览器是重型资源（Chromium 进程），用 __aenter__/__aexit__ 保证
+   无论成功或异常都会正确关闭，避免残留进程。
+
+2. launch_persistent_context 保持登录态
+   复用同一用户数据目录，Cookie/localStorage/登录态全部保留，
+   发布流程只需首次登录，后续自动保持会话。
+
+3. 可选审计层（audit 参数）
+   audit=None 时零开销；传入审计对象后自动挂载 6 个事件监听器，
+   捕获网络请求、控制台输出、页面错误等，用于调试和问题排查。
+   事件处理器全部 try/except 保护，确保调试功能不会成为系统故障点。
+
+4. URL 关键词过滤降噪
+   基础关键词 + 用户自定义关键词双重过滤，只记录发布流程相关的请求，
+   避免字体、图片、埋点等无关请求淹没日志。
+
+5. 反检测策略
+   - slow_mo_ms: 每步操作延迟，模拟人类速度（默认 80ms）
+   - --disable-blink-features=AutomationControlled: 隐藏 navigator.webdriver 标记
+
+6. keyword-only 参数
+   所有构造参数强制具名传递，防止布尔值/路径位置错乱。
+
+
+背景：网站如何检测自动化浏览器？
+现代网站（尤其是社交平台、电商、发布系统）常用以下手段判断访问者是否为真实用户：
+
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,6 +60,21 @@ class BrowserSession:
 
     # 异步上下文管理器入口 - 启动浏览器并初始化会话
     async def __aenter__(self) -> "BrowserSession":
+        """
+        作用：当进入 async with 代码块时自动调用。
+        返回值：通常返回资源对象本身（或需要绑定的对象），赋值给 async with ... as 后面的变量。
+        在本类中：
+
+        启动 Playwright 引擎（async_playwright().start()）。
+        启动持久化浏览器上下文（launch_persistent_context），加载用户数据目录，保留 Cookie 和登录状态。
+        获取或创建页面对象。
+        如果提供了 audit 参数，挂载调试事件钩子。
+        返回 self，因此你可以这样使用：
+        async with BrowserSession(profile_dir=Path("./user_data"), headless=False) as session:
+            page = session.page      # 直接获取已打开的页面
+            await page.goto("...")
+        :return:
+        """
         try:
             from playwright.async_api import async_playwright
         except ModuleNotFoundError as exc:
@@ -45,8 +93,11 @@ class BrowserSession:
             slow_mo=self.slow_mo_ms,              # 操作延迟
             viewport={"width": 1440, "height": 1000},  # 浏览器窗口大小
             args=["--disable-blink-features=AutomationControlled"],  # 禁用自动化检测特征
+            # 设置 args=["--disable-blink-features=AutomationControlled"] 是为了隐藏浏览器被自动化工具控制的特征，从而绕过网站的反爬虫/反机器人检测机制
         )
         # 获取或创建页面标签
+        # 这里的context就类似你启动一个chrome的页面
+        #  self.context.pages[0] 就是告诉chrome直接复用第一个页面.
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
         # 如果启用了审计模式，附加调试钩子
         if self.audit:

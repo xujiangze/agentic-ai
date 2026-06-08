@@ -1,6 +1,52 @@
-# 小红书自动发布器核心模块
-# 提供登录管理、内容发布、图文上传等自动化功能
+"""
+小红书自动发布器核心模块
+======================
 
+本模块实现小红书图文笔记的自动化发布，涵盖登录、内容填充、图片上传、发布确认的完整流程。
+
+整体架构
+--------
+XhsPublisher 是一个纯业务编排层，本身不管理浏览器生命周期，只接收一个 Playwright page 对象
+（由 BrowserSession 提供），专注于发布流程的状态机控制。
+
+调用链路::
+
+    publish_xhs.py（入口）
+        └── BrowserSession（浏览器生命周期）
+                └── XhsPublisher(page=session.page, ...)  ← 本模块
+                        ├── ensure_login()       登录保障
+                        ├── open_publish_page()   打开发布页
+                        ├── fill_note()           填充内容
+                        └── click_publish_and_wait()  发布确认
+
+核心设计原则
+------------
+1. 多策略降级（Multi-Strategy Fallback）
+   小红书前端频繁改版，CSS 类名和 DOM 结构不稳定。几乎所有 DOM 操作都采用
+   "策略1 → 策略2 → ... → 最终兜底" 的降级模式，而不是依赖单一选择器。
+   典型例子：click_bottom_publish_button 有 4 层降级策略。
+
+2. 评分制按钮定位（Score-Based Button Detection）
+   对于"发布"这类关键按钮，不依赖固定选择器，而是通过多维评分定位：
+   - 文本匹配分、按钮角色分、尺寸合理性分、颜色分（红色优先）
+   - 综合得分最高的候选元素被选为点击目标
+   - 这使得即使 DOM 结构变化，只要按钮的视觉特征不变就能正确定位
+
+3. 最小侵入式等待（Best-Effort Settle）
+   使用 _best_effort_settle() 代替硬性 networkidle 等待，
+   超时不报错而是静默降级到固定延时，避免长连接导致永久阻塞。
+
+4. 防御性编程（Defensive Event Handling）
+   所有事件监听器和 DOM 检测都用 try/except 包裹，
+   确保检测逻辑的异常不会中断主发布流程。
+
+5. 审计追踪（Audit Trail）
+   每个关键步骤都通过 audit.event() 记录，配合截图和 DOM 快照，
+   便于事后回溯发布失败的原因。
+
+6. keyword-only 构造参数
+   与 BrowserSession 一致，防止参数位置错乱。
+"""
 from __future__ import annotations
 
 import json
@@ -15,7 +61,17 @@ from .login_state import LoginState
 
 
 class XhsPublisher:
-    """小红书发布器主类 - 管理登录、内容填充和发布流程"""
+    """
+    小红书发布器主类 - 编排登录、内容填充和发布的完整流程。
+
+    职责边界
+    --------
+    - 负责：发布流程的状态机控制（登录 → 开页 → 填充 → 发布）
+    - 不负责：浏览器生命周期管理（由 BrowserSession 负责）
+    - 不负责：内容验证和格式化（由 XhsContent 在传入前完成）
+
+    对外只暴露 run() 方法作为主入口。
+    """
     def __init__(
         self,
         *,
@@ -49,13 +105,31 @@ class XhsPublisher:
     async def run(self, content: XhsContent) -> dict[str, Any]:
         """执行发布流程的主入口
 
-        流程: 登录 → 打开发布页 → 填充内容 → 发布/草稿
+        状态机流程::
+
+            ┌─────────────┐
+            │ ensure_login │  ← 缓存命中则跳过，未命中则触发扫码
+            └──────┬──────┘
+                   ▼
+            ┌──────────────────┐
+            │ open_publish_page │  ← 访问发布 URL，二次验证登录态
+            └──────┬───────────┘
+                   ▼
+            ┌────────────┐
+            │ fill_note  │  ← 上传图片 + 填标题 + 填正文 + 验证
+            └──────┬─────┘
+                   ▼
+            ┌─────────────────────────┐
+            │ mode == "draft" ?       │
+            │  是 → 返回 draft_ready  │
+            │  否 → click_publish     │
+            └─────────────────────────┘
 
         参数:
-            content: 待发布的内容对象
+            content: 待发布的内容对象（已通过 XhsContent 验证和格式化）
 
         返回:
-            包含状态、URL等信息的字典
+            包含 status/mode/url 等信息的字典
         """
         self.audit.event("publish_run_start", mode=content.mode, title=content.title)
         await self.ensure_login()
@@ -83,10 +157,28 @@ class XhsPublisher:
     async def ensure_login(self) -> None:
         """确保用户已登录
 
-        策略:
-        1. 检查登录状态缓存
-        2. 如果缓存失效，访问主页检测登录状态
-        3. 如未登录，准备二维码并等待用户扫码
+        三层登录策略::
+
+            ┌─────────────────────────┐
+            │ 1. 缓存检查              │  LoginState.is_valid()
+            │    命中 → 直接返回        │  避免每次都访问主页
+            └──────┬──────────────────┘
+                   │ 未命中
+                   ▼
+            ┌─────────────────────────┐
+            │ 2. 访问主页检测           │  page.goto(home_url)
+            │    已登录 → 更新缓存      │  mark_logged_in()
+            └──────┬──────────────────┘
+                   │ 未登录
+                   ▼
+            ┌─────────────────────────┐
+            │ 3. 二维码登录流程         │  prepare_qr_login()
+            │    截图推送 → 轮询等待    │  wait_for_user_login()
+            └─────────────────────────┘
+
+        为什么不在步骤 2 直接跳到发布页？
+        主页是公开页面，加载快且不依赖登录态；发布页如果未登录会被重定向，
+        检测逻辑更复杂。先在主页确认登录状态更可靠。
         """
         home_url = str(self.app_config["creator_home_url"])
         # 缓存命中，无需重新登录
@@ -96,6 +188,21 @@ class XhsPublisher:
 
         # 缓存失效，访问主页检测
         self.audit.event("login_cache_miss", url=home_url)
+        # DOMContentLoaded 是浏览器原生事件，触发时机为
+        # HTML 文档被完全加载和解析完成，DOM 树构建完毕，但此时外部资源（如图片、样式表、iframe、字体等）可能仍在加载中。
+        # 由于课程中只要dom完成即可, 因此无需等待其他的
+        # 模式: domcontentloaded
+        #   - 触发时机: DOM 树构建完成，但外部资源可能还在加载
+        #   - 适用场景: 页面主要内容是 HTML 文本，依赖 JS 渲染较少的情况；或者你需要尽快获取页面标题/URL 等元数据。
+        # 模式: load
+        #   - 触发时机: 所有资源（图片、CSS、字体、脚本等）都加载完成。
+        #   - 适用场景: 传统多页面应用（MPA），需要等待所有可见资源加载完再操作。
+        # 模式: networkidle (不推荐)
+        #   - 触发时机: 网络空闲（无活跃请求），通常指 500ms 内没有新的网络请求。但可能等待过久或永不触发（如长轮询）。
+        #   - 适用场景: 单页应用（SPA）的粗暴等待方式，但易不稳定，建议改用更精确的选择器等待。
+        # 模式: commit
+        #   - 触发时机: 收到响应头（HTTP 状态码、headers）并开始解析，但 HTML 可能还没收到。极少用。
+        #   - 适用场景: 	只需要确认请求已发送并收到初步响应，不关心内容。
         await self.page.goto(home_url, wait_until="domcontentloaded")
         await self._best_effort_settle(20_000)
         await self.audit.screenshot(self.page, "login_check")
@@ -116,8 +223,14 @@ class XhsPublisher:
     async def wait_for_user_login(self) -> None:
         """轮询等待用户扫码登录完成
 
-        每秒检测一次登录状态，每30秒截图一次
-        超时后抛出异常
+        轮询策略:
+        - 每秒检测一次登录状态（通过 _looks_logged_in 检测页面元素）
+        - 每 30 秒截图一次（便于事后查看扫码进度）
+        - 超时后记录最终状态并抛出 TimeoutError
+
+        为什么不监听网络请求来判断登录成功？
+        小红书的登录接口可能变化，且可能有多种登录回调 URL，
+        基于页面元素检测比依赖特定 API 更稳定。
         """
         deadline = self.login_timeout_seconds
         for second in range(deadline):
@@ -135,9 +248,14 @@ class XhsPublisher:
     async def prepare_qr_login(self) -> None:
         """准备二维码登录
 
-        1. 尝试点击二维码切换按钮(多个候选选择器)
-        2. 截取二维码图片
-        3. 通过云通知推送二维码给用户
+        流程:
+        1. 尝试点击二维码切换按钮（多个候选选择器，适配不同版本的小红书登录页）
+        2. 截取二维码图片保存到审计目录
+        3. 通过 CloudNotifier 推送二维码给用户（如果启用了远程通知）
+
+        为什么需要多个候选选择器？
+        小红书登录页有多种布局版本，二维码元素的选择器不固定。
+        使用 candidates 列表依次尝试，找到哪个算哪个。
         """
         clicked = False
         candidates = [
@@ -170,9 +288,15 @@ class XhsPublisher:
     async def open_publish_page(self) -> None:
         """打开发布页面
 
-        1. 访问发布页URL
-        2. 验证登录状态(如失效则重新登录)
-        3. 切换到图文上传标签
+        为什么需要二次验证登录状态？
+        ensure_login() 通过后，用户可能在主页和发布页之间的跳转中被踢出登录
+        （如 Cookie 过期、服务端主动失效）。在发布页上再次检测可以防止
+        在未登录状态下填充内容导致数据丢失。
+
+        流程:
+        1. 访问发布页 URL
+        2. 二次验证登录状态（如失效则 invalidate 缓存并重新走 ensure_login）
+        3. 切换到"图文上传"标签（默认可能是视频上传标签）
         """
         publish_url = str(self.app_config["publish_url"])
         self.audit.event("open_publish_page", url=publish_url)
@@ -195,11 +319,15 @@ class XhsPublisher:
         """填充笔记内容到发布表单
 
         步骤:
-        1. 上传图片(如有)
-        2. 填充标题
-        3. 填充正文(包含话题标签)
-        4. 按ESC关闭可能的弹窗
-        5. 验证填充是否成功
+        1. 上传图片（如有）—— 通过 file input 设置本地路径
+        2. 填充标题 —— 使用 fill_first 匹配多个候选输入框
+        3. 填充正文 —— 包含话题标签（#话题# 格式由 XhsContent 预处理）
+        4. 按 ESC 关闭可能的弹窗（话题选择弹窗、自动补全等）
+        5. 验证填充是否成功（防止静默填充失败）
+
+        为什么填充后要按 ESC？
+        填充正文时如果包含话题标签，小红书会弹出话题选择浮层，
+        ESC 可以关闭这些浮层，确保后续操作不被遮挡。
         """
         self.audit.event("fill_note_start", image_count=len(content.images))
         if content.images:
@@ -227,9 +355,13 @@ class XhsPublisher:
     async def select_image_tab(self) -> None:
         """切换到图文上传标签
 
-        策略:
-        1. 尝试直接点击文本"上传图文"
-        2. 失败则通过JS遍历DOM查找并点击
+        双策略降级:
+        1. Playwright 内置的 get_by_text 精确匹配"上传图文"文本
+        2. 失败则通过 JS 遍历 DOM 树查找并点击
+
+        为什么需要这个步骤？
+        小红书发布页默认可能停留在"上传视频"标签，
+        需要手动切换到"上传图文"标签才能正确显示图片上传的 file input。
         """
         tab_text = "上传图文"
         clicked = False
@@ -269,9 +401,13 @@ class XhsPublisher:
     async def find_image_upload_input(self) -> Any:
         """查找图片上传输入框
 
-        策略:
-        1. 使用配置的选择器查找
-        2. 失败则通过JS查找accept属性包含image的file输入框
+        双策略降级:
+        1. 使用配置文件中的选择器列表（selectors["image_upload_input_any"]）
+        2. 失败则通过 JS 查找 accept 属性包含图片类型的 file input
+
+        为什么策略 2 要检查 accept 属性？
+        发布页可能有多个 file input（图片、视频、附件等），
+        通过 accept 属性区分可以精确定位到图片上传的输入框。
         """
         try:
             return await first_attached(self.page, self.selectors["image_upload_input_any"], timeout_ms=5000)
@@ -296,9 +432,15 @@ class XhsPublisher:
         raise RuntimeError("image upload input was not found; page may still be on the video upload tab")
 
     async def verify_filled(self, content: XhsContent) -> None:
-        """验证内容是否成功填充
+        """验证内容是否成功填充到表单
 
-        检查页面是否包含标题和正文的片段
+        检查策略:
+        - 只检查标题前 20 个字符和正文前 20 个字符（足够确认填充成功，避免长文本匹配失败）
+        - 使用 _page_contains 三层检测（可见元素 → input 值 → HTML 源码）
+
+        为什么需要验证？
+        Playwright 的 fill 操作可能静默失败（如元素被覆盖、Shadow DOM 遮挡等），
+        不验证的话会带着空内容点发布，浪费一次发布机会。
         """
         title_ok = await self._page_contains(content.title[:20])
         body_probe = content.body[:20] if len(content.body) >= 20 else content.body
@@ -312,9 +454,16 @@ class XhsPublisher:
     async def click_publish_and_wait(self) -> dict[str, Any]:
         """点击发布按钮并等待结果
 
-        1. 点击底部发布按钮
-        2. 如有确认弹窗则点击确认
-        3. 等待并检测发布成功信号(URL或页面元素)
+        发布成功检测的两种信号:
+        1. URL 参数: published=true 出现在跳转后的 URL 中
+        2. 页面元素: 通过 selectors["success_any"] 定位成功提示元素
+
+        为什么需要两种检测方式？
+        小红书不同版本的发布成功表现不同：有的版本 URL 带参数跳转，
+        有的版本在当前页显示成功 toast。双信号覆盖两种情况。
+
+        返回:
+            status 为 "published"（确认成功）或 "publish_clicked_unconfirmed"（点击了但未确认）
         """
         self.audit.event("click_publish")
         await self.click_bottom_publish_button()
@@ -337,13 +486,32 @@ class XhsPublisher:
         }
 
     async def click_bottom_publish_button(self) -> None:
-        """点击底部发布按钮(多策略)
+        """点击底部发布按钮（4 层降级策略）
 
-        策略优先级:
-        1. 尝试调用Web Component的_onPublish方法
-        2. 查找可见的"发布"按钮并点击
-        3. 通过坐标点击(xhs-publish-btn组件右侧按钮)
-        4. 最后的JS遍历查找并点击
+        这是整个发布流程中最脆弱的环节，因为小红书使用自定义 Web Component
+        <xhs-publish-btn>，其内部结构可能随版本变化。4 层降级确保最大兼容性::
+
+            策略1: click_publish_component_button()
+                尝试直接调用组件的 _onPublish 私有方法，或遍历 Shadow DOM 找到
+                内部按钮元素并通过 pointer/mouse 事件模拟点击。
+                最精确但最依赖内部实现。
+
+            策略2: click_visible_publish_button()
+                不依赖特定组件，全局搜索文本为"发布"的可见按钮，
+                通过评分系统（红色优先、位置偏下、尺寸合理）选出最佳候选。
+
+            策略3: 坐标点击
+                定位 <xhs-publish-btn> 组件的 bounding box，
+                按比例偏移点击右侧区域（发布按钮在组件右侧的红色药丸按钮）。
+                纯几何定位，完全不依赖 DOM 结构。
+
+            策略4: JS DOM 遍历
+                全局遍历所有 button/div/span，找文本为"发布"且位于页面
+                下半部分的元素，点击最底部的一个。
+
+        为什么需要如此复杂的降级？
+        小红书前端团队经常更新发布页的 Web Component 实现。
+        单一策略可能在某次更新后全部失效，4 层降级确保至少有一种方式能工作。
         """
         if await self.click_publish_component_button():
             return
@@ -395,10 +563,24 @@ class XhsPublisher:
             raise RuntimeError("bottom publish button was not found")
 
     async def click_publish_component_button(self) -> bool:
-        """策略1: 尝试直接调用Web Component的_onPublish私有方法
+        """策略1: 精确打击 - 在 <xhs-publish-btn> 组件内部定位发布按钮
 
-        如果xhs-publish-btn组件暴露_onPublish方法，直接调用它
-        否则遍历Shadow DOM查找符合条件的按钮元素
+        两层子策略:
+        A. 直接调用组件暴露的 _onPublish() 私有方法（如果存在）
+           这是最理想的方式，直接触发组件内部逻辑，无需定位 DOM 元素。
+        B. 遍历 Shadow DOM + Light DOM 全部元素，通过多维评分定位按钮::
+
+              评分维度:
+              - textScore (0-8): 文本完全匹配 "发布" 得 8 分，包含得 4 分
+              - roleScore (0-3): 标签为 button 或 role="button" 得 3 分
+              - sizeScore (0-2): 尺寸在 40-180px × 24-70px 范围内得 2 分
+              - colorScore (0+): 红色系（R>180, G<130, B<150）得 3 分，R>G+50 得 1 分
+
+              过滤阈值: score >= 6 才作为候选，避免误点无关元素
+
+        为什么使用 pointerdown/mousedown/pointerup/mouseup/click 事件序列？
+        某些前端框架（如 Vue/React）会在 mousedown 或 pointerdown 上绑定事件处理，
+        单纯的 click 可能无法触发。完整事件序列模拟真实用户操作。
         """
         result = await self.page.evaluate(
             """
@@ -522,12 +704,22 @@ class XhsPublisher:
         return bool(result.get("clicked"))
 
     async def click_visible_publish_button(self) -> bool:
-        """策略2: 查找并点击可见的"发布"按钮
+        """策略2: 全局搜索 - 通过评分系统定位最可能的"发布"按钮
 
-        评分标准:
-        - 红色按钮优先(小红书发布按钮通常是红色)
-        - 位于页面下半部分
-        - 合适的尺寸(宽50-180px, 高28-70px)
+        不依赖特定 Web Component，在整个页面范围内搜索文本为"发布"的元素。
+        对每个候选元素向上遍历 5 层父元素，找到最合适的可点击容器::
+
+            评分维度:
+            - redScore:  红色系颜色得分（小红书发布按钮通常是红色）
+            - 位置分:   位于页面下半部分（55% 以下）得 4 分
+            - 宽度分:   50-180px 得 2 分
+            - 高度分:   28-70px 得 2 分
+
+            排除条件: disabled、aria-disabled、class 含 "disabled"
+
+        为什么向上遍历父元素？
+        文本"发布"可能在一个 <span> 内，但实际可点击的区域是其父 <button>。
+        向上查找确保点击的是完整的按钮元素而非内联文本节点。
         """
         result = await self.page.evaluate(
             """
@@ -608,8 +800,14 @@ class XhsPublisher:
     async def confirm_publish_if_needed(self) -> None:
         """如存在确认弹窗则点击确认
 
-        查找模态框中的"确定"、"确认"等按钮并点击
-        优先选择模态框内的按钮
+        检测逻辑:
+        1. 搜索文本为"确定"/"确认"/"继续发布"/"发布"的可见元素
+        2. 过滤：只点击位于模态框（dialog/modal）内的按钮
+        3. 优先选择模态框内的按钮（通过 closest() 检测父级 dialog 容器）
+
+        为什么限制在模态框内？
+        页面上可能存在多个文本为"发布"的按钮（如顶部导航栏的"发布"入口），
+        只有弹窗内的"确认"按钮才是我们要点的。通过 closest() 检查确保不会误点。
         """
         result = await self.page.evaluate(
             """
@@ -650,7 +848,13 @@ class XhsPublisher:
     async def _looks_logged_in(self) -> bool:
         """检测当前页面是否处于登录状态
 
-        通过查找登录成功标志元素判断
+        通过 selectors["login_success_any"] 中的候选选择器查找登录标志元素。
+        使用 any_visible（locator_utils 提供）依次尝试多个选择器，
+        只要有一个可见就判定为已登录。
+
+        为什么用"看起来已登录"这种模糊判断？
+        小红书的登录态没有统一的检测接口，只能通过页面元素推测。
+        常见的登录标志包括：用户头像、昵称显示、创作中心入口等。
         """
         try:
             return await any_visible(self.page, self.selectors["login_success_any"], timeout_ms=1800)
@@ -658,23 +862,45 @@ class XhsPublisher:
             return False
 
     async def _best_effort_settle(self, timeout_ms: int) -> None:
-        """等待页面加载稳定
+        """等待页面加载稳定（最小侵入式等待）
 
-        尝试等待网络空闲，超时则忽略(现代应用可能有长连接)
+        先尝试等待 networkidle（网络空闲），如果超时则不报错，
+        降级为固定 1200ms 等待。
+
+        为什么不直接用 networkidle？
+        小红书页面可能有长连接（WebSocket、埋点上报、实时推送等），
+        这些请求会导致 networkidle 永远不触发。
+        "尽力等待，等不到就算了"的策略比硬性超时报错更实用。
         """
         try:
+            # 单页应用（SPA）路由跳转后，动态内容通过 API 填充
+            # 过早执行 click() 可能找不到目标元素，因为数据还未渲染。
             await self.page.wait_for_load_state("networkidle", timeout=timeout_ms)
         except Exception as exc:  # noqa: BLE001 - modern apps may keep long-lived requests open.
             self.audit.event("networkidle_timeout_ignored", timeout_ms=timeout_ms, error=str(exc))
             await self.page.wait_for_timeout(1200)
 
     async def _page_contains(self, text: str) -> bool:
-        """检测页面是否包含指定文本
+        """检测页面是否包含指定文本（三层降级检测）
 
-        策略:
-        1. 使用Playwright的get_by_text查找可见元素
-        2. 失败则通过JS查找input/textarea/可编辑区域的值
-        3. 最后回退到HTML源码查找
+        检测链::
+
+            层1: Playwright get_by_text
+                查找页面中可见的文本元素，最快最准确。
+                但只能检测渲染后的可见文本，无法检测 input/textarea 的值。
+
+            层2: JS 查询 input/textarea/contenteditable
+                遍历所有表单元素和可编辑区域，检查 value/innerText。
+                补充层1 无法覆盖的表单值检测。
+
+            层3: HTML 源码匹配
+                最终兜底，在完整 HTML 中搜索文本。
+                最慢但最全面，能匹配到隐藏元素和注释中的文本。
+
+        为什么需要三层？
+        小红书发布页的输入框可能是 contenteditable 的 div（富文本编辑器），
+        也可能是原生 textarea，还可能在 Shadow DOM 中。
+        三层检测确保不遗漏任何存储位置。
         """
         if not text:
             return True
